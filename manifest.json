@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Suvadi",
   "version": "1.0",
-  "description": "Suvadi - Engrave your GPT conversations locally. Safe, silent, eternal.",
+  "description": "Save your GPT conversations locally.",
   "permissions": [
     "storage",
     "activeTab",
