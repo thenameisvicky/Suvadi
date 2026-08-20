@@ -1,0 +1,365 @@
+/* Styling for Helm Session Saver Widget */
+
+#chatgpt-session-saver-container {
+  position: fixed;
+  z-index: 9999999;
+  /* Ensure it stays on top of ChatGPT overlays */
+  background: rgba(20, 20, 20, 0.15) !important;
+  /* Highly transparent glass background */
+  backdrop-filter: blur(24px) saturate(180%);
+  /* Strong blur effect */
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  color: #ececf1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* Subtle light border to capture light reflection */
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: width 0.2s ease, height 0.2s ease, right 0.2s ease, top 0.2s ease, border-radius 0.2s ease;
+}
+
+#chatgpt-session-saver-container * {
+  box-sizing: border-box;
+}
+
+/* Custom premium scrollbar styling */
+#chatgpt-session-saver-container ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+#chatgpt-session-saver-container ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#chatgpt-session-saver-container ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+#chatgpt-session-saver-container ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* Minimized Floating State (Dynamic height to remove empty trailing whitespace) */
+#chatgpt-session-saver-container.chat-saver-minimized {
+  width: 320px;
+  height: auto;
+  max-height: 480px;
+  border-radius: 12px;
+}
+
+/* Maximized Floating State (Reaches end of page with a clean 20px gap top, bottom, and right) */
+#chatgpt-session-saver-container.chat-saver-maximized {
+  width: 360px;
+  height: calc(100vh - 40px) !important;
+  max-height: calc(100vh - 40px) !important;
+  top: 20px !important;
+  right: 20px !important;
+  left: auto !important;
+  bottom: 20px !important;
+  border-radius: 12px;
+}
+
+/* Header styling */
+.chat-saver-header {
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  /* Transparent header style */
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: move;
+  user-select: none;
+}
+
+.chat-saver-title {
+  font-weight: 600;
+  font-size: 15px;
+  /* Increased font size */
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70%;
+  color: #fff;
+}
+
+.chat-saver-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-saver-btn {
+  background: transparent;
+  border: none;
+  color: #acacbe;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+}
+
+.chat-saver-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+/* Tab Navigation (Minimized State Only) */
+.chat-saver-tabs {
+  display: flex;
+  background: rgba(255, 255, 255, 0.01);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-saver-tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #acacbe;
+  font-size: 13px;
+  /* Increased font size */
+  font-weight: 600;
+  padding: 8px 0;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.chat-saver-tab-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.chat-saver-tab-btn.active {
+  color: #ff4d4d;
+  /* Red theme accent text color */
+  border-bottom-color: #ff4d4d;
+  /* Red theme active tab line */
+  background: rgba(255, 77, 77, 0.05);
+  /* Red transparent active tab background */
+}
+
+/* Tab Content Panes in Minimized State (Supports scrolling if contents exceed max-height) */
+#chatgpt-session-saver-container.chat-saver-minimized .chat-saver-tab-pane {
+  display: none;
+}
+
+#chatgpt-session-saver-container.chat-saver-minimized .chat-saver-tab-pane.active {
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+/* In Maximized State, hide tabs and show all panes vertically */
+#chatgpt-session-saver-container.chat-saver-maximized #chat-saver-tabs-bar {
+  display: none !important;
+}
+
+#chatgpt-session-saver-container.chat-saver-maximized .chat-saver-tab-pane {
+  display: flex !important;
+  flex-direction: column;
+}
+
+/* Content Area */
+.chat-saver-content {
+  flex: 1;
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Minimized content has no gap and is padded inside panes */
+#chatgpt-session-saver-container.chat-saver-minimized .chat-saver-content {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  height: auto;
+  /* Dynamic height */
+}
+
+#chatgpt-session-saver-container.chat-saver-minimized .chat-saver-tab-pane {
+  padding: 12px;
+}
+
+/* Form Styles */
+.chat-saver-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-saver-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-saver-input-group label {
+  font-size: 12px;
+  /* Increased font size */
+  color: #acacbe;
+  font-weight: 500;
+}
+
+.chat-saver-input {
+  background: rgba(255, 255, 255, 0.05);
+  /* Matching dark glass input box */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 8px;
+  color: #fff;
+  font-size: 13px;
+  /* Increased font size */
+  outline: none;
+  width: 100%;
+  transition: border-color 0.2s;
+}
+
+.chat-saver-input:focus {
+  border-color: #ff4d4d;
+  /* Red focus border */
+}
+
+.chat-saver-submit-btn {
+  background: #ff4d4d;
+  /* Red submit button */
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  /* Increased font size */
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  width: 100%;
+}
+
+.chat-saver-submit-btn:hover {
+  background: #e03c3c;
+  /* Red submit hover */
+}
+
+/* Saved Chats List Section */
+.chat-saver-list-header {
+  font-size: 12px;
+  /* Increased font size */
+  font-weight: 600;
+  color: #acacbe;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 6px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+/* Maximize state adds margin between stacked sections */
+#chatgpt-session-saver-container.chat-saver-maximized .chat-saver-list-header {
+  margin-top: 18px;
+}
+
+.chat-saver-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.chat-saver-item {
+  background: rgba(255, 255, 255, 0.04);
+  /* Glass-matching list item */
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-saver-item-title {
+  font-size: 14px;
+  /* Increased font size */
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #ececf1;
+}
+
+.chat-saver-item-meta {
+  font-size: 11px;
+  /* Increased font size */
+  color: #acacbe;
+}
+
+.chat-saver-item-meta code {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.chat-saver-item-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.chat-saver-action-btn {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 11px;
+  /* Increased font size */
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #ececf1;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s;
+}
+
+.chat-saver-action-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.chat-saver-action-btn.delete-btn {
+  color: #ff4d4d;
+  border-color: rgba(255, 77, 77, 0.2);
+}
+
+.chat-saver-action-btn.delete-btn:hover {
+  background: rgba(255, 77, 77, 0.1);
+  border-color: #ff4d4d;
+}
+
+/* Local Sync Styling */
+.chat-saver-sync-box {
+  background: rgba(255, 255, 255, 0.04);
+  /* Glass-matching sync panel */
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+  /* Increased font size */
+}
