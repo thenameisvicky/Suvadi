@@ -1549,6 +1549,7 @@
     const textarea = container.querySelector('#suvadi-composer-textarea');
     const sendBtn = container.querySelector('#suvadi-composer-send-btn');
     const charCount = container.querySelector('#suvadi-composer-char-count');
+    const tokensCount = container.querySelector('#suvadi-composer-tokens');
     
     if (!textarea) return;
 
@@ -1567,27 +1568,26 @@
       updateStats();
     }
 
-    let startTime = null;
-
     function updateStats() {
       const text = textarea.value;
       const chars = text.length;
       const words = text.trim() ? text.trim().split(/\s+/).length : 0;
       
       if (chars > 0) {
-        if (!startTime) {
-          startTime = Date.now();
-        }
-        const elapsedMinutes = (Date.now() - startTime) / 60000;
-        const wpm = elapsedMinutes > 0.005 ? Math.round(words / elapsedMinutes) : 0;
-        const cpm = elapsedMinutes > 0.005 ? Math.round(chars / elapsedMinutes) : 0;
+        const tokens = Math.max(1, Math.round(chars / 4));
         if (charCount) {
-          charCount.textContent = `${chars} character${chars !== 1 ? 's' : ''} | ${words} word${words !== 1 ? 's' : ''} | ${wpm} WPM | ${cpm} CPM`;
+          charCount.textContent = `${chars} character${chars !== 1 ? 's' : ''} | ${words} word${words !== 1 ? 's' : ''}`;
+        }
+        if (tokensCount) {
+          tokensCount.textContent = `~${tokens} token${tokens !== 1 ? 's' : ''}`;
+          tokensCount.style.display = 'inline-block';
         }
       } else {
-        startTime = null;
         if (charCount) {
-          charCount.textContent = `0 characters | 0 words | 0 WPM | 0 CPM`;
+          charCount.textContent = `0 characters | 0 words`;
+        }
+        if (tokensCount) {
+          tokensCount.style.display = 'none';
         }
       }
     }
@@ -1660,7 +1660,10 @@
 
     composerContainer.innerHTML = `
       <div class="chat-saver-header" id="suvadi-composer-drag-handle">
-        <span class="chat-saver-title">Suvadi Composer</span>
+        <span class="chat-saver-title">
+          Suvadi Composer
+          <span id="suvadi-composer-tokens" class="suvadi-tokens-badge" style="display: none; font-size: 10px; opacity: 0.8; background: rgba(255, 77, 77, 0.2); border: 1px solid rgba(255, 77, 77, 0.4); color: #ff9999; padding: 2px 6px; border-radius: 4px; margin-left: 8px; font-weight: 600;">0 tokens</span>
+        </span>
         <div class="chat-saver-controls">
           <button class="chat-saver-btn suvadi-hyper-focus-toggle" id="suvadi-hyper-focus-toggle-composer" title="Enter Hyper Focus">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
@@ -1687,7 +1690,7 @@
       </div>
       
       <div class="suvadi-composer-footer">
-        <div id="suvadi-composer-char-count" class="suvadi-composer-char-count">0 characters | 0 words | 0 WPM | 0 CPM</div>
+        <div id="suvadi-composer-char-count" class="suvadi-composer-char-count">0 characters | 0 words</div>
         <button id="suvadi-composer-send-btn" class="chat-saver-submit-btn" style="width: auto; padding: 6px 16px;">Send</button>
       </div>
     `;
