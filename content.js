@@ -1567,12 +1567,28 @@
       updateStats();
     }
 
+    let startTime = null;
+
     function updateStats() {
       const text = textarea.value;
       const chars = text.length;
       const words = text.trim() ? text.trim().split(/\s+/).length : 0;
-      if (charCount) {
-        charCount.textContent = `${chars} character${chars !== 1 ? 's' : ''} | ${words} word${words !== 1 ? 's' : ''}`;
+      
+      if (chars > 0) {
+        if (!startTime) {
+          startTime = Date.now();
+        }
+        const elapsedMinutes = (Date.now() - startTime) / 60000;
+        const wpm = elapsedMinutes > 0.005 ? Math.round(words / elapsedMinutes) : 0;
+        const cpm = elapsedMinutes > 0.005 ? Math.round(chars / elapsedMinutes) : 0;
+        if (charCount) {
+          charCount.textContent = `${chars} character${chars !== 1 ? 's' : ''} | ${words} word${words !== 1 ? 's' : ''} | ${wpm} WPM | ${cpm} CPM`;
+        }
+      } else {
+        startTime = null;
+        if (charCount) {
+          charCount.textContent = `0 characters | 0 words | 0 WPM | 0 CPM`;
+        }
       }
     }
 
@@ -1671,7 +1687,7 @@
       </div>
       
       <div class="suvadi-composer-footer">
-        <div id="suvadi-composer-char-count" class="suvadi-composer-char-count">0 characters | 0 words</div>
+        <div id="suvadi-composer-char-count" class="suvadi-composer-char-count">0 characters | 0 words | 0 WPM | 0 CPM</div>
         <button id="suvadi-composer-send-btn" class="chat-saver-submit-btn" style="width: auto; padding: 6px 16px;">Send</button>
       </div>
     `;
