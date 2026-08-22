@@ -363,3 +363,186 @@
   font-size: 12px;
   /* Increased font size */
 }
+
+#suvadi-composer-panel {
+  position: fixed;
+  z-index: 9999998;
+  background: rgba(20, 20, 20, 0.15) !important;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  color: #ececf1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: width 0.2s ease, height 0.2s ease, left 0.2s ease, top 0.2s ease, border-radius 0.2s ease;
+}
+
+#suvadi-composer-panel * {
+  box-sizing: border-box;
+}
+
+#suvadi-composer-panel.suvadi-composer-minimized {
+  width: 400px;
+  height: 300px;
+  min-width: 300px;
+  min-height: 200px;
+  border-radius: 12px;
+  resize: both;
+}
+
+#suvadi-composer-panel.suvadi-composer-maximized {
+  width: 360px !important;
+  height: calc(100vh - 40px) !important;
+  max-height: calc(100vh - 40px) !important;
+  top: 20px !important;
+  left: 20px !important;
+  right: auto !important;
+  bottom: 20px !important;
+  border-radius: 12px;
+  resize: none !important;
+}
+
+.suvadi-composer-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.suvadi-toolbar-btn {
+  background: transparent;
+  border: none;
+  color: #acacbe;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.suvadi-toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.suvadi-composer-editor-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  background: transparent;
+}
+
+.suvadi-composer-textarea {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: none;
+  resize: none;
+  outline: none;
+  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.suvadi-composer-textarea::placeholder {
+  color: #565869;
+}
+
+.suvadi-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.suvadi-composer-char-count {
+  font-size: 11px;
+  color: #acacbe;
+}
+
+/* Dragging Helper Styles */
+.suvadi-global-dragging,
+.suvadi-global-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+#suvadi-composer-panel.suvadi-dragging * {
+  pointer-events: none !important;
+}
+
+#chatgpt-session-saver-container.chat-saver-dragging * {
+  pointer-events: none !important;
+}
+
+/* Hyper Focus Mode Styles */
+.suvadi-hyper-focus header,
+.suvadi-hyper-focus [role="navigation"],
+.suvadi-hyper-focus .sticky.top-0,
+.suvadi-hyper-focus [data-testid="sidebar"],
+.suvadi-hyper-focus [class*="sidebar"],
+.suvadi-hyper-focus [class*="top-navigation"] {
+  display: none !important;
+}
+
+/* Hide native bottom input container completely from view while keeping in DOM to prevent React ResizeObserver loops */
+.suvadi-hyper-focus form:not(#chat-saver-start-form) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Restructure main chat flow */
+.suvadi-hyper-focus main {
+  padding-top: 20px !important;
+}
+
+/* Active focus toggle button highlighting */
+.suvadi-hyper-focus-toggle.active {
+  color: #ff4d4d !important;
+}
+
+/* Collapse History & Performance Mode Styles */
+.suvadi-collapsed-message {
+  display: none !important;
+}
+
+#suvadi-show-older-btn {
+  display: block;
+  margin: 20px auto;
+  padding: 10px 24px;
+  background: rgba(255, 77, 77, 0.08);
+  border: 1px solid rgba(255, 77, 77, 0.2);
+  border-radius: 20px;
+  color: #ececf1;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+#suvadi-show-older-btn:hover {
+  background: rgba(255, 77, 77, 0.15);
+  border-color: rgba(255, 77, 77, 0.35);
+  transform: translateY(-1px);
+}
+
+#suvadi-show-older-btn:active {
+  transform: translateY(0);
+}
+
+#suvadi-collapse-history-toggle.active {
+  color: #ff4d4d !important;
+}

@@ -1,15 +1,11 @@
-// background.js
-
 chrome.action.onClicked.addListener(async (tab) => {
   const url = tab && tab.url;
 
   if (url && url.includes("chatgpt.com")) {
-    // Try sending message first
     try {
       await chrome.tabs.sendMessage(tab.id, { action: "toggle_widget" });
     } catch (err) {
       console.log("Content script not active, injecting programmatically...", err);
-      // Inject content script and styles programmatically
       try {
         await chrome.scripting.insertCSS({
           target: { tabId: tab.id },
@@ -20,26 +16,30 @@ chrome.action.onClicked.addListener(async (tab) => {
           files: ["content.js"]
         });
         
-        // Wait a short moment and send message
         setTimeout(() => {
-          chrome.tabs.sendMessage(tab.id, { action: "toggle_widget" })
-            .catch(e => console.error("Retry failed:", e));
+          chrome.tabs.sendMessage(tab.id, { action: "toggle_widget" }, () => {
+            if (chrome.runtime.lastError) {
+              console.log("Retry failed safely (content script not ready):", chrome.runtime.lastError.message);
+            }
+          });
         }, 150);
       } catch (injectErr) {
         console.error("Failed to inject content script:", injectErr);
       }
     }
   } else {
-    // If we're not on ChatGPT or can't access tab URL (e.g. system page), 
-    // set visibility flag and open a new ChatGPT tab.
     chrome.storage.local.set({ chatgpt_saver_visible: true }, () => {
       chrome.tabs.create({ url: "https://chatgpt.com" });
     });
   }
 });
 
-// Listener for writing files via the downloads API
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "get_tab_id") {
+    sendResponse({ tabId: sender.tab ? sender.tab.id : null });
+    return false; 
+  }
+
   if (request.action === "write_local_file") {
     try {
       const base64Content = btoa(unescape(encodeURIComponent(request.content)));
@@ -47,7 +47,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       
       chrome.downloads.download({
         url: dataUrl,
-        filename: `helm_vault/${request.fileName}`,
+        filename: `suvadi_vault/${request.fileName}`,
         conflictAction: 'overwrite',
         saveAs: false
       }, (downloadId) => {
@@ -64,4 +64,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     return true; // Keep channel open for async response
   }
+});
+
+// Clean up tab-specific storage when a tab is closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.local.get(null, (data) => {
+    const keysToRemove = [];
+    const suffix = `_${tabId}`;
+    for (const key of Object.keys(data)) {
+      if (key.endsWith(suffix)) {
+        keysToRemove.push(key);
+      }
+    }
+    if (keysToRemove.length > 0) {
+      chrome.storage.local.remove(keysToRemove);
+    }
+  });
 });

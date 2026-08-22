@@ -6,8 +6,107 @@
   let initialLeft, initialTop;
   let saveTimeout = null;
   let isAutoSyncEnabled = false;
+  let isCollapseHistoryEnabled = false;
 
-  function getCleanMessageText(msgEl, role) {
+  let composerContainer = null;
+  let isComposerDragging = false;
+  let composerStartX = 0, composerStartY = 0;
+  let composerInitialLeft = 0, composerInitialTop = 0;
+
+  // Intercept normal Enter in ChatGPT to prevent accidental half-written submissions
+  document.addEventListener('keydown', (e) => {
+    const target = e.target;
+    if (target && target.matches('[contenteditable="true"], textarea')) {
+      // Exclude our own composer textarea
+      if (target.id === 'suvadi-composer-textarea') return;
+      
+      // If it is ChatGPT's input box, intercept normal Enter
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Convert it to a Shift+Enter keypress so it inserts a newline instead
+        const shiftEnterEvent = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+          shiftKey: true
+        });
+        target.dispatchEvent(shiftEnterEvent);
+      }
+    }
+  }, true);
+
+  let tabId = null;
+
+  function getTabKey(key) {
+    const tabSpecificKeys = [
+      'chatgpt_active_chat',
+      'chatgpt_saver_visible',
+      'chatgpt_composer_visible',
+      'chatgpt_composer_draft',
+      'chatgpt_hyper_focus'
+    ];
+    if (tabSpecificKeys.includes(key) && tabId) {
+      return `${key}_${tabId}`;
+    }
+    return key;
+  }
+
+  const tabStorage = {
+    get: (keys, cb) => {
+      const queryObj = {};
+      if (typeof keys === 'string') {
+        queryObj[getTabKey(keys)] = null;
+      } else if (Array.isArray(keys)) {
+        keys.forEach(k => {
+          queryObj[getTabKey(k)] = null;
+        });
+      } else if (keys && typeof keys === 'object') {
+        for (const [k, v] of Object.entries(keys)) {
+          queryObj[getTabKey(k)] = v;
+        }
+      }
+      chrome.storage.local.get(queryObj, (data) => {
+        const result = {};
+        if (typeof keys === 'string') {
+          result[keys] = data[getTabKey(keys)];
+          cb(result);
+        } else if (Array.isArray(keys)) {
+          keys.forEach(k => {
+            result[k] = data[getTabKey(k)];
+          });
+          cb(result);
+        } else if (keys && typeof keys === 'object') {
+          for (const k of Object.keys(keys)) {
+            result[k] = data[getTabKey(k)] !== undefined ? data[getTabKey(k)] : keys[k];
+          }
+          cb(result);
+        }
+      });
+    },
+    set: (obj, cb) => {
+      const storeObj = {};
+      for (const [k, v] of Object.entries(obj)) {
+        storeObj[getTabKey(k)] = v;
+      }
+      chrome.storage.local.set(storeObj, cb);
+    },
+    remove: (keys, cb) => {
+      const keysToRemove = Array.isArray(keys) ? keys : [keys];
+      const mappedKeys = keysToRemove.map(k => getTabKey(k));
+      chrome.storage.local.remove(mappedKeys, cb);
+    }
+  };
+
+  function getCleanMessageText(msgEl, role, isLast) {
+    if (msgEl.__suvadi_clean_text) {
+      return msgEl.__suvadi_clean_text;
+    }
+
     const clone = msgEl.cloneNode(true);
     
     const interactiveSelectors = [
@@ -26,12 +125,20 @@
       clone.querySelectorAll(selector).forEach(el => el.remove());
     });
 
+    let cleanText = "";
     if (role === 'assistant') {
       const markdown = clone.querySelector('.markdown') || clone;
-      return markdown.innerText.trim();
+      cleanText = markdown.innerText.trim();
+    } else {
+      cleanText = clone.innerText.trim();
     }
-    
-    return clone.innerText.trim();
+
+    // Cache clean text for static historic messages (not the last active one)
+    if (!isLast && cleanText) {
+      msgEl.__suvadi_clean_text = cleanText;
+    }
+
+    return cleanText;
   }
 
   function syncConversation() {
@@ -48,9 +155,10 @@
     if (messageElements.length === 0) return;
 
     const currentDOMMessages = [];
-    messageElements.forEach(el => {
+    messageElements.forEach((el, index) => {
       const role = el.getAttribute('data-message-author-role');
-      const text = getCleanMessageText(el, role);
+      const isLast = (index === messageElements.length - 1);
+      const text = getCleanMessageText(el, role, isLast);
       if (text) {
         currentDOMMessages.push({ role, text });
       }
@@ -71,7 +179,7 @@
       messagesToStore = currentDOMMessages;
     }
 
-    chrome.storage.local.get(['chatgpt_saved_chats'], (data) => {
+    tabStorage.get(['chatgpt_saved_chats'], (data) => {
       const saved = data.chatgpt_saved_chats || {};
       if (saved[activeChat.id]) {
         const prevLength = saved[activeChat.id].messages.length;
@@ -92,7 +200,7 @@
           // Keep activeChat updated in memory and storage so refreshes restore the full state
           activeChat.baseMessages = messagesToStore;
           
-          chrome.storage.local.set({ 
+          tabStorage.set({ 
             chatgpt_saved_chats: saved,
             chatgpt_active_chat: activeChat
           }, () => {
@@ -112,15 +220,16 @@
   }
 
   const observer = new MutationObserver((mutations) => {
-    if (!activeChat) return;
-    
     let shouldSync = false;
+    let hasNewArticles = false;
+    
     for (const mutation of mutations) {
       if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
         for (const node of mutation.addedNodes) {
           if (node.nodeType === Node.ELEMENT_NODE) {
             if (node.querySelector('[data-message-author-role]') || node.hasAttribute('data-message-author-role') || node.tagName === 'ARTICLE') {
               shouldSync = true;
+              hasNewArticles = true;
               break;
             }
           }
@@ -131,7 +240,11 @@
       if (shouldSync) break;
     }
     
-    if (shouldSync) {
+    if (hasNewArticles && isCollapseHistoryEnabled) {
+      collapseOlderMessages();
+    }
+    
+    if (shouldSync && activeChat) {
       queueSave();
     }
   });
@@ -245,10 +358,123 @@
     }, 300);
   }
 
+  function toggleHyperFocus() {
+    const body = document.body;
+    const isEnabled = body.classList.contains('suvadi-hyper-focus');
+    
+    if (isEnabled) {
+      body.classList.remove('suvadi-hyper-focus');
+      tabStorage.set({ chatgpt_hyper_focus: false });
+      updateHyperFocusUI(false);
+    } else {
+      body.classList.add('suvadi-hyper-focus');
+      tabStorage.set({ chatgpt_hyper_focus: true });
+      updateHyperFocusUI(true);
+    }
+  }
+
+  function updateHyperFocusUI(isEnabled) {
+    const btns = document.querySelectorAll('.suvadi-hyper-focus-toggle');
+    btns.forEach(btn => {
+      if (isEnabled) {
+        btn.classList.add('active');
+        btn.setAttribute('title', 'Exit Hyper Focus');
+      } else {
+        btn.classList.remove('active');
+        btn.setAttribute('title', 'Enter Hyper Focus');
+      }
+    });
+  }
+
+  function toggleCollapseHistory() {
+    tabStorage.get(['chatgpt_collapse_history'], (data) => {
+      const isCollapsed = data.chatgpt_collapse_history === true;
+      if (isCollapsed) {
+        tabStorage.set({ chatgpt_collapse_history: false }, () => {
+          isCollapseHistoryEnabled = false;
+          updateCollapseHistoryUI(false);
+          expandAllMessages();
+        });
+      } else {
+        tabStorage.set({ chatgpt_collapse_history: true }, () => {
+          isCollapseHistoryEnabled = true;
+          updateCollapseHistoryUI(true);
+          collapseOlderMessages();
+        });
+      }
+    });
+  }
+
+  function updateCollapseHistoryUI(isEnabled) {
+    const btn = document.getElementById('suvadi-collapse-history-toggle');
+    if (!btn) return;
+    const icon = document.getElementById('suvadi-collapse-history-icon');
+    if (isEnabled) {
+      btn.classList.add('active');
+      btn.setAttribute('title', 'Expand History (Show all messages)');
+      if (icon) {
+        icon.innerHTML = `<polyline points="17 13 12 18 7 13"></polyline><polyline points="17 6 12 11 7 6"></polyline>`;
+      }
+    } else {
+      btn.classList.remove('active');
+      btn.setAttribute('title', 'Collapse History (Speed Boost)');
+      if (icon) {
+        icon.innerHTML = `<polyline points="17 11 12 6 7 11"></polyline><polyline points="17 18 12 13 7 18"></polyline>`;
+      }
+    }
+  }
+
+  function collapseOlderMessages() {
+    const articles = document.querySelectorAll('article');
+    if (articles.length <= 8) {
+      const existingBtn = document.getElementById('suvadi-show-older-btn');
+      if (existingBtn) existingBtn.remove();
+      return;
+    }
+    
+    const collapsedCount = articles.length - 8;
+    for (let i = 0; i < collapsedCount; i++) {
+      articles[i].classList.add('suvadi-collapsed-message');
+    }
+    for (let i = collapsedCount; i < articles.length; i++) {
+      articles[i].classList.remove('suvadi-collapsed-message');
+    }
+    
+    // Insert fold toggle button before the 9th article (the first visible one)
+    const targetArticle = articles[collapsedCount];
+    let showOlderBtn = document.getElementById('suvadi-show-older-btn');
+    if (!showOlderBtn) {
+      showOlderBtn = document.createElement('button');
+      showOlderBtn.id = 'suvadi-show-older-btn';
+      showOlderBtn.addEventListener('click', () => {
+        tabStorage.set({ chatgpt_collapse_history: false }, () => {
+          isCollapseHistoryEnabled = false;
+          updateCollapseHistoryUI(false);
+          expandAllMessages();
+        });
+      });
+      targetArticle.parentNode.insertBefore(showOlderBtn, targetArticle);
+    }
+    showOlderBtn.textContent = `Show older messages (${collapsedCount} hidden for performance)`;
+  }
+
+  function expandAllMessages() {
+    const collapsed = document.querySelectorAll('.suvadi-collapsed-message');
+    collapsed.forEach(el => el.classList.remove('suvadi-collapsed-message'));
+    
+    const showOlderBtn = document.getElementById('suvadi-show-older-btn');
+    if (showOlderBtn) {
+      showOlderBtn.remove();
+    }
+  }
+
   function setupDragAndDrop(container) {
     if (!container) return;
     const dragHandle = container.querySelector('#chat-saver-drag-handle');
     if (!dragHandle) return;
+    
+    let cachedWidth = 0;
+    let cachedHeight = 0;
     
     dragHandle.addEventListener('mousedown', (e) => {
       if (e.target.closest('.chat-saver-controls')) return;
@@ -260,12 +486,17 @@
       const rect = container.getBoundingClientRect();
       initialLeft = rect.left;
       initialTop = rect.top;
+      cachedWidth = rect.width;
+      cachedHeight = rect.height;
 
       container.style.left = `${initialLeft}px`;
       container.style.top = `${initialTop}px`;
       container.style.right = 'auto';
       container.style.bottom = 'auto';
       container.style.transition = 'none';
+      
+      container.classList.add('chat-saver-dragging');
+      document.body.classList.add('suvadi-global-dragging');
 
       document.addEventListener('mousemove', onMouseMove);
       document.addEventListener('mouseup', onMouseUp);
@@ -282,17 +513,18 @@
       let newLeft = initialLeft + dx;
       let newTop = initialTop + dy;
       
-      const rect = container.getBoundingClientRect();
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
       
       if (newLeft < 0) newLeft = 0;
-      if (newLeft + rect.width > viewportWidth) newLeft = viewportWidth - rect.width;
+      if (newLeft + cachedWidth > viewportWidth) newLeft = viewportWidth - cachedWidth;
       if (newTop < 0) newTop = 0;
-      if (newTop + rect.height > viewportHeight) newTop = viewportHeight - rect.height;
+      if (newTop + cachedHeight > viewportHeight) newTop = viewportHeight - cachedHeight;
       
       container.style.left = `${newLeft}px`;
       container.style.top = `${newTop}px`;
+      container.style.right = 'auto';
+      container.style.bottom = 'auto';
     }
 
     function onMouseUp() {
@@ -300,8 +532,11 @@
       isDragging = false;
       container.style.transition = 'width 0.2s ease, height 0.2s ease, right 0.2s ease, top 0.2s ease, border-radius 0.2s ease';
       
+      container.classList.remove('chat-saver-dragging');
+      document.body.classList.remove('suvadi-global-dragging');
+
       const rect = container.getBoundingClientRect();
-      chrome.storage.local.set({
+      tabStorage.set({
         chatgpt_saver_pos: {
           left: rect.left,
           top: rect.top
@@ -318,23 +553,17 @@
     if (!useTransition) {
       widgetContainer.style.transition = 'none';
     }
+    
+    // Clear inline styles before maximizing so stylesheet rules apply cleanly
+    widgetContainer.style.width = '';
+    widgetContainer.style.height = '';
+    widgetContainer.style.left = '';
+    widgetContainer.style.top = '';
+    widgetContainer.style.right = '';
+    widgetContainer.style.bottom = '';
+
     widgetContainer.classList.remove('chat-saver-minimized');
     widgetContainer.classList.add('chat-saver-maximized');
-    
-    chrome.storage.local.get(['chatgpt_saver_pos'], (data) => {
-      if (!widgetContainer) return;
-      if (data.chatgpt_saver_pos) {
-        widgetContainer.style.left = `${data.chatgpt_saver_pos.left}px`;
-        widgetContainer.style.top = `${data.chatgpt_saver_pos.top}px`;
-        widgetContainer.style.right = 'auto';
-        widgetContainer.style.bottom = 'auto';
-      } else {
-        widgetContainer.style.top = '70px';
-        widgetContainer.style.right = '20px';
-        widgetContainer.style.left = 'auto';
-        widgetContainer.style.bottom = 'auto';
-      }
-    });
     
     const sizeIcon = document.getElementById('chat-saver-size-icon');
     if (sizeIcon) {
@@ -346,7 +575,7 @@
       widgetContainer.style.transition = 'width 0.2s ease, height 0.2s ease, right 0.2s ease, top 0.2s ease, border-radius 0.2s ease';
     }
     
-    chrome.storage.local.set({ chatgpt_saver_state: 'maximized' });
+    tabStorage.set({ chatgpt_saver_state: 'maximized' });
   }
 
   function minimizeWidget(useTransition = true) {
@@ -357,7 +586,7 @@
     widgetContainer.classList.remove('chat-saver-maximized');
     widgetContainer.classList.add('chat-saver-minimized');
     
-    chrome.storage.local.get(['chatgpt_saver_pos'], (data) => {
+    tabStorage.get(['chatgpt_saver_pos'], (data) => {
       if (!widgetContainer) return;
       if (data.chatgpt_saver_pos) {
         widgetContainer.style.left = `${data.chatgpt_saver_pos.left}px`;
@@ -382,12 +611,12 @@
       widgetContainer.style.transition = 'width 0.2s ease, height 0.2s ease, right 0.2s ease, top 0.2s ease, border-radius 0.2s ease';
     }
 
-    chrome.storage.local.set({ chatgpt_saver_state: 'minimized' });
+    tabStorage.set({ chatgpt_saver_state: 'minimized' });
   }
 
   function applyStoredPosition() {
     if (!widgetContainer) return;
-    chrome.storage.local.get(['chatgpt_saver_pos', 'chatgpt_saver_state'], (data) => {
+    tabStorage.get(['chatgpt_saver_pos', 'chatgpt_saver_state'], (data) => {
       if (!widgetContainer) return;
       const isMaximized = data.chatgpt_saver_state === 'maximized';
       
@@ -433,11 +662,39 @@
       });
     }
 
+    const toggleHyperFocusBtn = container.querySelector('#suvadi-hyper-focus-toggle-main');
+    if (toggleHyperFocusBtn) {
+      toggleHyperFocusBtn.addEventListener('click', toggleHyperFocus);
+    }
+
+    const toggleCollapseBtn = container.querySelector('#suvadi-collapse-history-toggle');
+    if (toggleCollapseBtn) {
+      toggleCollapseBtn.addEventListener('click', toggleCollapseHistory);
+      updateCollapseHistoryUI(isCollapseHistoryEnabled);
+    }
+
+    const toggleComposerBtn = container.querySelector('#suvadi-composer-toggle-trigger');
+    if (toggleComposerBtn) {
+      toggleComposerBtn.addEventListener('click', () => {
+        if (!composerContainer) return;
+        
+        if (composerContainer.style.display === 'none') {
+          composerContainer.style.display = 'flex';
+          tabStorage.set({ chatgpt_composer_visible: true });
+          const textarea = composerContainer.querySelector('#suvadi-composer-textarea');
+          if (textarea) textarea.focus();
+        } else {
+          composerContainer.style.display = 'none';
+          tabStorage.set({ chatgpt_composer_visible: false });
+        }
+      });
+    }
+
     const closeBtn = container.querySelector('#chat-saver-close');
     if (closeBtn) {
       closeBtn.addEventListener('click', () => {
         container.style.display = 'none';
-        chrome.storage.local.set({ chatgpt_saver_visible: false });
+        tabStorage.set({ chatgpt_saver_visible: false });
       });
     }
   }
@@ -452,7 +709,7 @@
       baseMessages: []
     };
 
-    chrome.storage.local.get(['chatgpt_saved_chats'], (data) => {
+    tabStorage.get(['chatgpt_saved_chats'], (data) => {
       const saved = data.chatgpt_saved_chats || {};
       saved[chatId] = {
         id: chatId,
@@ -461,7 +718,7 @@
         messages: [],
         timestamp: Date.now()
       };
-      chrome.storage.local.set({ 
+      tabStorage.set({ 
         chatgpt_active_chat: activeChat, 
         chatgpt_saved_chats: saved 
       }, () => {
@@ -500,7 +757,7 @@
 
   function stopRecording() {
     activeChat = null;
-    chrome.storage.local.remove('chatgpt_active_chat', () => {
+    tabStorage.remove('chatgpt_active_chat', () => {
       renderActiveArea();
     });
   }
@@ -569,7 +826,7 @@
     const listContainer = document.getElementById('chat-saver-list-container');
     if (!listContainer) return;
 
-    chrome.storage.local.get(['chatgpt_saved_chats'], (data) => {
+    tabStorage.get(['chatgpt_saved_chats'], (data) => {
       const saved = data.chatgpt_saved_chats || {};
       const chatIds = Object.keys(saved).sort((a, b) => saved[b].timestamp - saved[a].timestamp);
 
@@ -629,7 +886,7 @@
   }
 
   function loadSavedChat(id) {
-    chrome.storage.local.get(['chatgpt_saved_chats'], (data) => {
+    tabStorage.get(['chatgpt_saved_chats'], (data) => {
       const saved = data.chatgpt_saved_chats || {};
       const chat = saved[id];
       if (!chat || !chat.messages || chat.messages.length === 0) {
@@ -645,7 +902,7 @@
         baseMessages: chat.messages
       };
 
-      chrome.storage.local.set({ chatgpt_active_chat: activeChat }, () => {
+      tabStorage.set({ chatgpt_active_chat: activeChat }, () => {
         renderActiveArea();
         
         const formattedPrompt = formatChatHistory(chat.messages);
@@ -661,7 +918,7 @@
   }
 
   function copySavedChat(id) {
-    chrome.storage.local.get(['chatgpt_saved_chats'], (data) => {
+    tabStorage.get(['chatgpt_saved_chats'], (data) => {
       const saved = data.chatgpt_saved_chats || {};
       const chat = saved[id];
       if (!chat || !chat.messages) return;
@@ -683,16 +940,16 @@
   function deleteSavedChat(id) {
     if (!confirm("Are you sure you want to delete this saved chat?")) return;
 
-    chrome.storage.local.get(['chatgpt_saved_chats'], (data) => {
+    tabStorage.get(['chatgpt_saved_chats'], (data) => {
       const saved = data.chatgpt_saved_chats || {};
       delete saved[id];
       
       if (activeChat && activeChat.id === id) {
         activeChat = null;
-        chrome.storage.local.remove('chatgpt_active_chat');
+        tabStorage.remove('chatgpt_active_chat');
       }
 
-      chrome.storage.local.set({ chatgpt_saved_chats: saved }, () => {
+      tabStorage.set({ chatgpt_saved_chats: saved }, () => {
         renderActiveArea();
         renderSavedChatsList();
         syncAllToLocal(saved); 
@@ -884,7 +1141,7 @@
         messagesToStore = currentDOMMessages;
       }
 
-      chrome.storage.local.get(['chatgpt_saved_chats'], (data) => {
+      tabStorage.get(['chatgpt_saved_chats'], (data) => {
         const saved = data.chatgpt_saved_chats || {};
         if (saved[activeChat.id]) {
           saved[activeChat.id].messages = messagesToStore;
@@ -893,7 +1150,7 @@
           // Keep activeChat updated in memory and storage so refreshes restore the full state
           activeChat.baseMessages = messagesToStore;
 
-          chrome.storage.local.set({ 
+          tabStorage.set({ 
             chatgpt_saved_chats: saved,
             chatgpt_active_chat: activeChat
           }, () => {
@@ -909,7 +1166,7 @@
 
   function triggerFullSync() {
     forceSyncConversation().then(() => {
-      chrome.storage.local.get(['chatgpt_saved_chats'], (data) => {
+      tabStorage.get(['chatgpt_saved_chats'], (data) => {
         const saved = data.chatgpt_saved_chats || {};
         const chatIds = Object.keys(saved);
         if (chatIds.length === 0) {
@@ -917,7 +1174,7 @@
           return;
         }
         syncAllToLocal(saved, true).then(() => {
-          alert(`Export complete! Saved ${chatIds.length} chat sessions inside your downloads folder: 'helm_vault/'.`);
+          alert(`Export complete! Saved ${chatIds.length} chat sessions inside your downloads folder: 'suvadi_vault/'.`);
         });
       });
     });
@@ -925,7 +1182,7 @@
 
   // Check sync states on UI load
   function checkLocalSyncOnLoad() {
-    chrome.storage.local.get(['chatgpt_auto_sync'], (data) => {
+    tabStorage.get(['chatgpt_auto_sync'], (data) => {
       isAutoSyncEnabled = data.chatgpt_auto_sync === true;
       const autoSyncCb = document.getElementById('chat-saver-auto-sync-cb');
       if (autoSyncCb) {
@@ -948,7 +1205,7 @@
     if (autoSyncCb) {
       autoSyncCb.addEventListener('change', (e) => {
         isAutoSyncEnabled = e.target.checked;
-        chrome.storage.local.set({ chatgpt_auto_sync: isAutoSyncEnabled });
+        tabStorage.set({ chatgpt_auto_sync: isAutoSyncEnabled });
       });
     }
   }
@@ -1068,7 +1325,7 @@
           return;
         }
 
-        chrome.storage.local.get(['chatgpt_saved_chats'], (data) => {
+        tabStorage.get(['chatgpt_saved_chats'], (data) => {
           const saved = data.chatgpt_saved_chats || {};
           let mergedCount = 0;
           
@@ -1087,7 +1344,7 @@
             }
           }
 
-          chrome.storage.local.set({ chatgpt_saved_chats: saved }, () => {
+          tabStorage.set({ chatgpt_saved_chats: saved }, () => {
             renderSavedChatsList();
             alert(`Import complete! Successfully imported/updated ${mergedCount} chat sessions.`);
             fileInput.value = '';
@@ -1095,6 +1352,374 @@
         });
       };
       reader.readAsText(file);
+    });
+  }
+
+  function setupComposerDrag(container) {
+    const dragHandle = container.querySelector('#suvadi-composer-drag-handle');
+    if (!dragHandle) return;
+
+    let cachedWidth = 0;
+    let cachedHeight = 0;
+
+    dragHandle.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.chat-saver-controls')) return;
+      if (container.classList.contains('suvadi-composer-maximized')) return;
+
+      isComposerDragging = true;
+      composerStartX = e.clientX;
+      composerStartY = e.clientY;
+
+      const rect = container.getBoundingClientRect();
+      composerInitialLeft = rect.left;
+      composerInitialTop = rect.top;
+      cachedWidth = rect.width;
+      cachedHeight = rect.height;
+
+      container.style.left = `${composerInitialLeft}px`;
+      container.style.top = `${composerInitialTop}px`;
+      container.style.right = 'auto';
+      container.style.bottom = 'auto';
+      container.style.transition = 'none';
+
+      container.classList.add('suvadi-dragging');
+      document.body.classList.add('suvadi-global-dragging');
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      
+      e.preventDefault();
+    });
+
+    function onMouseMove(e) {
+      if (!isComposerDragging) return;
+      
+      const dx = e.clientX - composerStartX;
+      const dy = e.clientY - composerStartY;
+      
+      let newLeft = composerInitialLeft + dx;
+      let newTop = composerInitialTop + dy;
+      
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      
+      if (newLeft < 0) newLeft = 0;
+      if (newLeft + cachedWidth > viewportWidth) newLeft = viewportWidth - cachedWidth;
+      if (newTop < 0) newTop = 0;
+      if (newTop + cachedHeight > viewportHeight) newTop = viewportHeight - cachedHeight;
+      
+      container.style.left = `${newLeft}px`;
+      container.style.top = `${newTop}px`;
+    }
+
+    function onMouseUp() {
+      if (!isComposerDragging) return;
+      isComposerDragging = false;
+      container.style.transition = 'width 0.2s ease, height 0.2s ease, left 0.2s ease, top 0.2s ease, border-radius 0.2s ease';
+      
+      container.classList.remove('suvadi-dragging');
+      document.body.classList.remove('suvadi-global-dragging');
+
+      const rect = container.getBoundingClientRect();
+      tabStorage.set({
+        chatgpt_composer_pos: {
+          left: rect.left,
+          top: rect.top
+        }
+      });
+
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+    
+    // Save size when manually resized by native handles
+    container.addEventListener('mouseup', () => {
+      if (!container.classList.contains('suvadi-composer-maximized') && container.style.display !== 'none') {
+        const rect = container.getBoundingClientRect();
+        tabStorage.set({
+          chatgpt_composer_size: {
+            width: rect.width,
+            height: rect.height
+          }
+        });
+      }
+    });
+  }
+
+  function maximizeComposer(useTransition = true) {
+    if (!composerContainer) return;
+    if (!useTransition) {
+      composerContainer.style.transition = 'none';
+    }
+    
+    // Clear inline styles before maximizing so stylesheet rules apply cleanly
+    composerContainer.style.width = '';
+    composerContainer.style.height = '';
+    composerContainer.style.left = '';
+    composerContainer.style.top = '';
+    composerContainer.style.right = '';
+    composerContainer.style.bottom = '';
+
+    composerContainer.classList.remove('suvadi-composer-minimized');
+    composerContainer.classList.add('suvadi-composer-maximized');
+    
+    const sizeIcon = composerContainer.querySelector('#suvadi-composer-size-icon');
+    if (sizeIcon) {
+      sizeIcon.innerHTML = `<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/>`;
+    }
+    
+    if (!useTransition) {
+      composerContainer.offsetHeight; // force reflow
+      composerContainer.style.transition = 'width 0.2s ease, height 0.2s ease, left 0.2s ease, top 0.2s ease, border-radius 0.2s ease';
+    }
+    
+    tabStorage.set({ chatgpt_composer_state: 'maximized' });
+  }
+
+  function minimizeComposer(useTransition = true) {
+    if (!composerContainer) return;
+    if (!useTransition) {
+      composerContainer.style.transition = 'none';
+    }
+    composerContainer.classList.remove('suvadi-composer-maximized');
+    composerContainer.classList.add('suvadi-composer-minimized');
+    
+    const sizeIcon = composerContainer.querySelector('#suvadi-composer-size-icon');
+    if (sizeIcon) {
+      sizeIcon.innerHTML = `<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>`;
+    }
+    
+    // Restore size & pos inline style rules
+    tabStorage.get(['chatgpt_composer_pos', 'chatgpt_composer_size'], (data) => {
+      if (!composerContainer) return;
+      if (data.chatgpt_composer_size) {
+        composerContainer.style.width = `${data.chatgpt_composer_size.width}px`;
+        composerContainer.style.height = `${data.chatgpt_composer_size.height}px`;
+      } else {
+        composerContainer.style.width = '400px';
+        composerContainer.style.height = '300px';
+      }
+      
+      if (data.chatgpt_composer_pos) {
+        composerContainer.style.left = `${data.chatgpt_composer_pos.left}px`;
+        composerContainer.style.top = `${data.chatgpt_composer_pos.top}px`;
+      } else {
+        composerContainer.style.top = '70px';
+        composerContainer.style.left = '70px';
+      }
+      composerContainer.style.right = 'auto';
+      composerContainer.style.bottom = 'auto';
+    });
+
+    if (!useTransition) {
+      composerContainer.offsetHeight; // force reflow
+      composerContainer.style.transition = 'width 0.2s ease, height 0.2s ease, left 0.2s ease, top 0.2s ease, border-radius 0.2s ease';
+    }
+    
+    tabStorage.set({ chatgpt_composer_state: 'minimized' });
+  }
+
+  function setupComposerControls(container) {
+    const toggleSizeBtn = container.querySelector('#suvadi-composer-toggle-size');
+    if (toggleSizeBtn) {
+      toggleSizeBtn.addEventListener('click', () => {
+        if (container.classList.contains('suvadi-composer-maximized')) {
+          minimizeComposer(true);
+        } else {
+          maximizeComposer(true);
+        }
+      });
+    }
+
+    const toggleHyperFocusBtn = container.querySelector('#suvadi-hyper-focus-toggle-composer');
+    if (toggleHyperFocusBtn) {
+      toggleHyperFocusBtn.addEventListener('click', toggleHyperFocus);
+    }
+
+    const closeBtn = container.querySelector('#suvadi-composer-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        container.style.display = 'none';
+        tabStorage.set({ chatgpt_composer_visible: false });
+      });
+    }
+  }
+
+  function setupComposerEditor(container) {
+    const textarea = container.querySelector('#suvadi-composer-textarea');
+    const sendBtn = container.querySelector('#suvadi-composer-send-btn');
+    const charCount = container.querySelector('#suvadi-composer-char-count');
+    
+    if (!textarea) return;
+
+    // Helper for editing text
+    function insertMarkup(before, after = '') {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const text = textarea.value;
+      const selected = text.substring(start, end);
+      const replacement = before + selected + after;
+      textarea.value = text.substring(0, start) + replacement + text.substring(end);
+      
+      textarea.focus();
+      textarea.selectionStart = start + before.length;
+      textarea.selectionEnd = start + before.length + selected.length;
+      updateStats();
+    }
+
+    function updateStats() {
+      const text = textarea.value;
+      const chars = text.length;
+      const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+      if (charCount) {
+        charCount.textContent = `${chars} character${chars !== 1 ? 's' : ''} | ${words} word${words !== 1 ? 's' : ''}`;
+      }
+    }
+
+    textarea.addEventListener('input', updateStats);
+
+    // Toolbar event delegation
+    container.querySelectorAll('.suvadi-toolbar-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.getAttribute('data-action');
+        if (action === 'bold') {
+          insertMarkup('**', '**');
+        } else if (action === 'italic') {
+          insertMarkup('_', '_');
+        } else if (action === 'code') {
+          insertMarkup('```\n', '\n```');
+        } else if (action === 'bullet') {
+          insertMarkup('- ');
+        } else if (action === 'clear') {
+          textarea.value = '';
+          updateStats();
+        }
+      });
+    });
+
+    // Keydown listeners inside composer textarea
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'b' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        insertMarkup('**', '**');
+      } else if (e.key === 'i' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        insertMarkup('_', '_');
+      } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        sendPrompt();
+      }
+    });
+
+    // Send button event
+    if (sendBtn) {
+      sendBtn.addEventListener('click', sendPrompt);
+    }
+
+    function sendPrompt() {
+      const promptText = textarea.value.trim();
+      if (!promptText) return;
+
+      const success = insertTextIntoInput(promptText);
+      if (success) {
+        submitChatInput();
+        textarea.value = '';
+        updateStats();
+      } else {
+        alert("Failed to send prompt to ChatGPT input. Please make sure you are on an active ChatGPT conversation page.");
+      }
+    }
+  }
+
+  function initComposer() {
+    const existing = document.getElementById('suvadi-composer-panel');
+    if (existing) {
+      existing.remove();
+    }
+
+    composerContainer = document.createElement('div');
+    composerContainer.id = 'suvadi-composer-panel';
+    composerContainer.className = 'suvadi-composer-minimized';
+    composerContainer.style.display = 'none';
+
+    composerContainer.innerHTML = `
+      <div class="chat-saver-header" id="suvadi-composer-drag-handle">
+        <span class="chat-saver-title">Suvadi Composer</span>
+        <div class="chat-saver-controls">
+          <button class="chat-saver-btn suvadi-hyper-focus-toggle" id="suvadi-hyper-focus-toggle-composer" title="Enter Hyper Focus">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+          </button>
+          <button class="chat-saver-btn" id="suvadi-composer-toggle-size" title="Maximize/Minimize">
+            <svg id="suvadi-composer-size-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+          </button>
+          <button class="chat-saver-btn" id="suvadi-composer-close" title="Close">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+      </div>
+      
+      <div class="suvadi-composer-toolbar">
+        <button class="suvadi-toolbar-btn" data-action="bold" title="Bold (Ctrl+B)">B</button>
+        <button class="suvadi-toolbar-btn" data-action="italic" title="Italic (Ctrl+I)">I</button>
+        <button class="suvadi-toolbar-btn" data-action="code" title="Code Block">Code</button>
+        <button class="suvadi-toolbar-btn" data-action="bullet" title="Bullet List">- List</button>
+        <button class="suvadi-toolbar-btn" data-action="clear" title="Clear">Clear</button>
+      </div>
+      
+      <div class="suvadi-composer-editor-wrapper">
+        <textarea id="suvadi-composer-textarea" class="suvadi-composer-textarea" placeholder="Compose your prompt here... Enter adds a newline. Ctrl+Enter sends to ChatGPT."></textarea>
+      </div>
+      
+      <div class="suvadi-composer-footer">
+        <div id="suvadi-composer-char-count" class="suvadi-composer-char-count">0 characters | 0 words</div>
+        <button id="suvadi-composer-send-btn" class="chat-saver-submit-btn" style="width: auto; padding: 6px 16px;">Send</button>
+      </div>
+    `;
+
+    document.body.appendChild(composerContainer);
+
+    setupComposerDrag(composerContainer);
+    setupComposerControls(composerContainer);
+    setupComposerEditor(composerContainer);
+
+    tabStorage.get([
+      'chatgpt_composer_visible',
+      'chatgpt_composer_state',
+      'chatgpt_composer_pos',
+      'chatgpt_composer_size',
+      'chatgpt_hyper_focus'
+    ], (data) => {
+      const isVisible = data.chatgpt_composer_visible === true;
+      const state = data.chatgpt_composer_state || 'minimized';
+      
+      if (state === 'maximized') {
+        maximizeComposer(false);
+      } else {
+        minimizeComposer(false);
+        if (data.chatgpt_composer_size) {
+          composerContainer.style.width = `${data.chatgpt_composer_size.width}px`;
+          composerContainer.style.height = `${data.chatgpt_composer_size.height}px`;
+        }
+        if (data.chatgpt_composer_pos) {
+          composerContainer.style.left = `${data.chatgpt_composer_pos.left}px`;
+          composerContainer.style.top = `${data.chatgpt_composer_pos.top}px`;
+          composerContainer.style.right = 'auto';
+          composerContainer.style.bottom = 'auto';
+        } else {
+          composerContainer.style.top = '70px';
+          composerContainer.style.left = '70px';
+          composerContainer.style.right = 'auto';
+          composerContainer.style.bottom = 'auto';
+        }
+      }
+
+      if (isVisible) {
+        composerContainer.style.display = 'flex';
+      }
+
+      if (data.chatgpt_hyper_focus === true) {
+        updateHyperFocusUI(true);
+      }
     });
   }
 
@@ -1113,6 +1738,15 @@
       <div class="chat-saver-header" id="chat-saver-drag-handle">
         <span class="chat-saver-title" id="chat-saver-widget-title">Suvadi</span>
         <div class="chat-saver-controls">
+          <button class="chat-saver-btn suvadi-hyper-focus-toggle" id="suvadi-hyper-focus-toggle-main" title="Enter Hyper Focus">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+          </button>
+          <button class="chat-saver-btn" id="suvadi-collapse-history-toggle" title="Collapse History (Speed Boost)">
+            <svg id="suvadi-collapse-history-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 12 6 7 11"></polyline><polyline points="17 18 12 13 7 18"></polyline></svg>
+          </button>
+          <button class="chat-saver-btn" id="suvadi-composer-toggle-trigger" title="Use custom message bar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          </button>
           <button class="chat-saver-btn" id="chat-saver-toggle-size" title="Maximize/Minimize">
             <svg id="chat-saver-size-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
           </button>
@@ -1164,7 +1798,7 @@
 
     document.body.appendChild(widgetContainer);
 
-    chrome.storage.local.get(['chatgpt_saver_visible', 'chatgpt_active_chat'], (data) => {
+    tabStorage.get(['chatgpt_saver_visible', 'chatgpt_active_chat'], (data) => {
       activeChat = data.chatgpt_active_chat || null;
 
       setupDragAndDrop(widgetContainer);
@@ -1172,6 +1806,7 @@
       setupSyncSection(widgetContainer);
       setupTabs(widgetContainer);
       setupImportHandler(widgetContainer);
+      initComposer();
       
       renderActiveArea();
       renderSavedChatsList();
@@ -1193,23 +1828,56 @@
       
       if (widgetContainer.style.display === 'none') {
         widgetContainer.style.display = 'flex';
-        chrome.storage.local.set({ chatgpt_saver_visible: true });
+        tabStorage.set({ chatgpt_saver_visible: true });
         applyStoredPosition();
         
-        chrome.storage.local.get(['chatgpt_active_chat'], (data) => {
+        tabStorage.get(['chatgpt_active_chat'], (data) => {
           activeChat = data.chatgpt_active_chat || null;
           renderActiveArea();
         });
       } else {
         widgetContainer.style.display = 'none';
-        chrome.storage.local.set({ chatgpt_saver_visible: false });
+        tabStorage.set({ chatgpt_saver_visible: false });
       }
     }
   });
 
+  function startInit() {
+    chrome.runtime.sendMessage({ action: 'get_tab_id' }, (response) => {
+      if (response && response.tabId) {
+        tabId = response.tabId;
+      }
+      
+      tabStorage.get(['chatgpt_hyper_focus', 'chatgpt_collapse_history'], (focusData) => {
+        if (focusData && focusData.chatgpt_hyper_focus === true) {
+          document.body.classList.add('suvadi-hyper-focus');
+        }
+        if (focusData && focusData.chatgpt_collapse_history === true) {
+          isCollapseHistoryEnabled = true;
+          setTimeout(collapseOlderMessages, 800);
+        }
+        
+        // Consume the global launch flag if set by clicking icon on a non-chatgpt page
+        chrome.storage.local.get(['chatgpt_saver_visible'], (data) => {
+          if (data.chatgpt_saver_visible === true) {
+            const storeObj = {
+              [`chatgpt_saver_visible_${tabId}`]: true,
+              chatgpt_saver_visible: null
+            };
+            chrome.storage.local.set(storeObj, () => {
+              initWidget();
+            });
+          } else {
+            initWidget();
+          }
+        });
+      });
+    });
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initWidget);
+    document.addEventListener('DOMContentLoaded', startInit);
   } else {
-    initWidget();
+    startInit();
   }
 })();
